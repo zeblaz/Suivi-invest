@@ -1,5 +1,6 @@
 import streamlit as st
 import yfinance as yf
+import pandas as pd
 import feedparser
 from datetime import datetime
 
@@ -20,7 +21,7 @@ ACTIFS = {
     "Interparfums": "ITP.PA",
     "FDJ": "FDJ.PA",
     "Coca-Cola": "KO",
-    "Ethereum": "ETH-EUR"
+    "Ethereum": "ETH-EUR",
 }
 
 def calculer_rsi(series_close, periode=14):
@@ -48,23 +49,19 @@ def charger_actif(ticker):
     t = yf.Ticker(ticker)
     data = t.history(period="3mo")
     if data is None or data.empty or "Close" not in data:
-        raise ValueError("Pas de données historiques")
+        raise ValueError("Pas de données")
     close = data["Close"].dropna()
     if len(close) < 16:
-        raise ValueError("Historique insuffisant pour RSI")
+        raise ValueError("Historique court")
 
-    # Déterminer si le ticker est déjà en EUR ou s'il faut convertir depuis USD
     est_deja_eur = ticker.endswith((".PA", ".DE", ".AS", "-EUR", ".BR", ".MI"))
     devise = "EUR" if est_deja_eur else "USD"
     return float(close.iloc[-1]), float(close.iloc[-2]), calculer_rsi(close, 14), devise
 
 taux_eur_usd = get_taux_eur_usd()
+lignes = []
 
-st.subheader("📈 Cours en euros & RSI (14 jours)")
-cols = st.columns(2)
-
-for idx, (nom, ticker) in enumerate(ACTIFS.items()):
-    col = cols[idx % 2]
+for nom, ticker in ACTIFS.items():
     try:
         cours, veille, rsi_val, devise = charger_actif(ticker)
 
@@ -75,30 +72,36 @@ for idx, (nom, ticker) in enumerate(ACTIFS.items()):
         var = ((cours - veille) / veille) * 100
 
         if rsi_val >= 70:
-            etat_rsi = f"🔴 RSI {rsi_val:.0f} (Surachat)"
+            rsi_txt = f"🔴 {rsi_val:.0f} (Surachat)"
         elif rsi_val <= 30:
-            etat_rsi = f"🟢 RSI {rsi_val:.0f} (Survente)"
+            rsi_txt = f"🟢 {rsi_val:.0f} (Survente)"
         else:
-            etat_rsi = f"⚪ RSI {rsi_val:.0f} (Neutre)"
+            rsi_txt = f"⚪ {rsi_val:.0f} (Neutre)"
 
-        with col.container(border=True):
-            st.metric(
-                label=nom,
-                value=f"{cours:.2f} €",
-                delta=f"{var:+.2f} %"
-            )
-            st.write(etat_rsi)
-    except Exception as e:
-        with col.container(border=True):
-            st.metric(label=nom, value="Indispo", delta="N/A")
-            st.caption(f"Détail : {e}")
+        lignes.append({
+            "Actif": nom,
+            "Cours (€)": f"{cours:.2f} €",
+            "Var. jour": f"{var:+.2f} %",
+            "RSI (14j)": rsi_txt,
+        })
+    except Exception:
+        lignes.append({
+            "Actif": nom,
+            "Cours (€)": "Indispo",
+            "Var. jour": "—",
+            "RSI (14j)": "—",
+        })
+
+st.subheader("📈 Cours en euros & RSI")
+df_cours = pd.DataFrame(lignes)
+st.dataframe(df_cours, use_container_width=True, hide_index=True)
 
 st.divider()
 
-# --- 2. TES FLUX D'ACTUALITÉS ---
+# --- 2. ACTUALITÉS ---
 FLUX_RSS = [
     "https://news.google.com/rss/search?q=Nvidia+OR+ASML+OR+semiconducteurs&hl=fr&gl=FR&ceid=FR:fr",
-    "https://news.google.com/rss/search?q=ETF+MSCI+World+OR+BCE+taux&hl=fr&gl=FR&ceid=FR:fr"
+    "https://news.google.com/rss/search?q=ETF+MSCI+World+OR+BCE+taux&hl=fr&gl=FR&ceid=FR:fr",
 ]
 
 st.subheader("📰 Actualités ciblées")
