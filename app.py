@@ -5,7 +5,7 @@ import feedparser
 from datetime import datetime
 
 st.set_page_config(page_title="Mon Suivi", layout="wide")
-st.title("📊 Suivi Quotidien : Cours (€) & RSI")
+st.title("📊 Suivi Quotidien : Cours (€), RSI, Support & Résistance")
 st.caption(f"Mis à jour le {datetime.now().strftime('%d/%m/%Y à %H:%M')}")
 
 if st.button("🔄 Actualiser les données"):
@@ -34,6 +34,12 @@ def calculer_rsi(series_close, periode=14):
     rsi = 100 - (100 / (1 + rs))
     return float(rsi.iloc[-1])
 
+def calculer_support_resistance(df_hist, fenetre=20):
+    recent = df_hist.tail(fenetre)
+    support = float(recent["Low"].min()) if "Low" in recent else float(recent["Close"].min())
+    resistance = float(recent["High"].max()) if "High" in recent else float(recent["Close"].max())
+    return support, resistance
+
 @st.cache_data(ttl=600)
 def get_taux_eur_usd():
     try:
@@ -50,24 +56,30 @@ def charger_actif(ticker):
     data = t.history(period="3mo")
     if data is None or data.empty or "Close" not in data:
         raise ValueError("Pas de données")
-    close = data["Close"].dropna()
+    data_propre = data.dropna(subset=["Close"])
+    close = data_propre["Close"]
     if len(close) < 16:
         raise ValueError("Historique court")
 
+    rsi_val = calculer_rsi(close, 14)
+    support, resistance = calculer_support_resistance(data_propre, fenetre=20)
+
     est_deja_eur = ticker.endswith((".PA", ".DE", ".AS", "-EUR", ".BR", ".MI"))
     devise = "EUR" if est_deja_eur else "USD"
-    return float(close.iloc[-1]), float(close.iloc[-2]), calculer_rsi(close, 14), devise
+    return float(close.iloc[-1]), float(close.iloc[-2]), rsi_val, support, resistance, devise
 
 taux_eur_usd = get_taux_eur_usd()
 lignes = []
 
 for nom, ticker in ACTIFS.items():
     try:
-        cours, veille, rsi_val, devise = charger_actif(ticker)
+        cours, veille, rsi_val, support, resistance, devise = charger_actif(ticker)
 
         if devise == "USD":
             cours = cours / taux_eur_usd
             veille = veille / taux_eur_usd
+            support = support / taux_eur_usd
+            resistance = resistance / taux_eur_usd
 
         var = ((cours - veille) / veille) * 100
 
@@ -83,6 +95,8 @@ for nom, ticker in ACTIFS.items():
             "Cours (€)": f"{cours:.2f} €",
             "Var. jour": f"{var:+.2f} %",
             "RSI (14j)": rsi_txt,
+            "Support (20j)": f"{support:.2f} €",
+            "Résistance (20j)": f"{resistance:.2f} €",
         })
     except Exception:
         lignes.append({
@@ -90,9 +104,11 @@ for nom, ticker in ACTIFS.items():
             "Cours (€)": "Indispo",
             "Var. jour": "—",
             "RSI (14j)": "—",
+            "Support (20j)": "—",
+            "Résistance (20j)": "—",
         })
 
-st.subheader("📈 Cours en euros & RSI")
+st.subheader("📈 Tableau des cours en euros, RSI, Support & Résistance")
 df_cours = pd.DataFrame(lignes)
 st.dataframe(df_cours, use_container_width=True, hide_index=True)
 
